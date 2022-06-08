@@ -15,7 +15,7 @@ def train_loop(data, model, loss_functions, optimizers, schedulers, loss_weights
     for optimizer in optimizers:
         optimizer.zero_grad()
     # torch.cuda.empty_cache()
-    audio_features, pitches, onsets, _, input_lengths, _, tatum_frames = data
+    audio_features, pitches, onsets, input_lengths, tatum_frames = data
     audio_features = audio_features.to(DEVICE)
     pitches = pitches.to(DEVICE)
     onsets = onsets.to(DEVICE)
@@ -39,7 +39,7 @@ def train_loop(data, model, loss_functions, optimizers, schedulers, loss_weights
 
 @test_loop_decorator
 def test_loop(data, model, dataloader_name):
-    audio_features, pitches, onsets, _, input_lengths, _, tatum_frames = data
+    audio_features, pitches, onsets, input_lengths, tatum_frames = data
     audio_features = audio_features.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     with torch.no_grad():

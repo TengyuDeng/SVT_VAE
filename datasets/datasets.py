@@ -7,7 +7,6 @@ import torch, torchaudio
 import librosa
 import pickle
 import h5py
-from decoders import Mycodec
 os.environ["HDF5_USE_FILE_LOCKING"] = 'FALSE'
 
 seed = 65324
@@ -32,9 +31,9 @@ class ConvFilter:
 
 class MyDataset(torch.utils.data.Dataset):
     
-    def __init__(self, name, indexes_path, hdf5s_dir, transform,
+    def __init__(self, indexes_path, hdf5s_dir, transform,
+        name="RWC",
         text_only=False,
-        target_type="word",
         frame_based=False,
         pitch_shift=False, 
         separated=False,
@@ -51,11 +50,6 @@ class MyDataset(torch.utils.data.Dataset):
         self.indexes = pickle.load(open(indexes_path, 'rb'))
 
         self.hdf5s_dir = hdf5s_dir
-        self.target_type = target_type
-        if self.target_type == "with_pitch":
-            self.codec = Mycodec(self.target_type, min_pitch_label, max_pitch_label)
-        else:
-            self.codec = Mycodec(self.target_type)
         self.transform = transform
 
         self.text_only = text_only
@@ -70,106 +64,56 @@ class MyDataset(torch.utils.data.Dataset):
 
     def __len__(self):
 
-        if self.name == "RWC" and self.pitch_shift:
+        if self.pitch_shift:
             return len(self.indexes) * 25
         else:
             return len(self.indexes)
 
     def __getitem__(self, i):
         # start_time = time.time()
-        if self.name == "RWC":
-            index_id = i // 25 if self.pitch_shift else i
-            track_id = self.indexes[index_id]['track_id']
-            if 'frames' in self.indexes[index_id]:
-                frames = self.indexes[index_id]['frames']
-                tatum_ids = None
-            else:
-                frames = None
-                tatum_ids = self.indexes[index_id]['tatum_ids']
-            text = " "
-            pitch_offset = 0
-            hdf5_path = os.path.join(self.hdf5s_dir, f"p{track_id:0>3}.h5")
-            hdf5s_dir_sep = self.hdf5s_dir[:self.hdf5s_dir.rfind(".")] + "_separated" + self.hdf5s_dir[self.hdf5s_dir.rfind("."):]
-            hdf5_path_sep = os.path.join(hdf5s_dir_sep, f"p{track_id:0>3}.h5")
-        
-        elif self.name == "DALI":
-            dali_id = self.indexes[i]['dali_id']
-            if 'frames' in self.indexes[i]:
-                frames = self.indexes[i]['frames']
-                tatum_ids = None
-            else:
-                frames = None
-                tatum_ids = self.indexes[i]['tatum_ids']
-            if self.target_type == "with_pitch":
-                text = self.indexes[i]['text_with_pitch'] 
-            else:
-                text = self.indexes[i]['text']
-            pitch_offset = self.indexes[i]['offset']
-            hdf5_path = os.path.join(self.hdf5s_dir, f"{dali_id}.h5")
-
-        else:
-            raise RuntimeError("Task not supported!")
-        
-        # if self.target_type == "phoneme":
-        #     text = self.codec.phonemize(text)
-        text = self.codec.encode(text)
+        index_id = i // 25 if self.pitch_shift else i
+        track_id = self.indexes[index_id]['track_id']
+        frames = None
+        tatum_ids = self.indexes[index_id]['tatum_ids']
+        text = " "
+        pitch_offset = 0
+        hdf5_path = os.path.join(self.hdf5s_dir, f"p{track_id:0>3}.h5")
+        hdf5s_dir_sep = self.hdf5s_dir[:self.hdf5s_dir.rfind(".")] + "_separated" + self.hdf5s_dir[self.hdf5s_dir.rfind("."):]
+        hdf5_path_sep = os.path.join(hdf5s_dir_sep, f"p{track_id:0>3}.h5")
 
         with h5py.File(hdf5_path, 'r') as hf:
-            if self.name == "RWC":
-                with h5py.File(hdf5_path_sep, 'r') as hf_sep:
-                    input_features, pitches, onsets, sr, hop_length, tatum_time = self._get_data_from_hdf5(hf, pitch_offset, tatum_ids, frames, hf_sep=hf_sep)
-            else:
-                input_features, pitches, onsets, sr, hop_length, tatum_time = self._get_data_from_hdf5(hf, pitch_offset, tatum_ids, frames)
-        
+            with h5py.File(hdf5_path_sep, 'r') as hf_sep:
+                input_features, pitches, onsets, sr, hop_length, tatum_time = self._get_data_from_hdf5(hf, pitch_offset, tatum_ids, hf_sep)
+
         # tatum frames:
         tatum_frames = librosa.time_to_frames(tatum_time, sr=sr, hop_length=hop_length)
         # print(f"getitem using time {time.time() - start_time}")
         
         # targets:
-        if self.text_only:
-            return (
-                input_features,
-                torch.tensor(text, dtype=torch.int),
-                )
-        else:
-            return (
-                input_features, pitches, onsets,
-                torch.tensor(text, dtype=torch.int),
-                torch.tensor(tatum_frames, dtype=torch.long),
-                )
+        return (
+            input_features, pitches, onsets,
+            torch.tensor(tatum_frames, dtype=torch.long),
+            )
 
-    def _get_data_from_hdf5(self, hf, pitch_offset, tatum_ids, frames, hf_sep=None):
+    def _get_data_from_hdf5(self, hf, pitch_offset, tatum_ids, hf_sep):
         sr = hf.attrs['sample_rate']
         hop_length = hf.attrs['hop_length']
         pitch_shift = list(range(-12, 13))[i % 25] if self.pitch_shift else 0
 
         # waveform:
-        if tatum_ids is not None:
-            samples = librosa.time_to_samples(hf['tatum_time'][tatum_ids], sr=sr)
-            frames = librosa.time_to_frames(hf['tatum_time'][tatum_ids], sr=sr, hop_length=hop_length)
-        else:
-            samples = librosa.frames_to_samples(frames, hop_length=hop_length)
-            tatum_ids = [0, 80]
-        if self.name == "RWC":
-            if pitch_shift == 0:
-                waveform_mix = hf['waveform'][samples[0]: samples[1]]
-                waveform_sep = hf_sep['waveform'][samples[0]: samples[1]]
-            else:
-                waveform_mix = hf[f"waveform_shifted_{pitch_shift}"][samples[0]: samples[1]]
-                waveform_sep = hf_sep[f"waveform_shifted_{pitch_shift}"][samples[0]: samples[1]]
-            
-            if self.separated:
-                waveform = waveform_sep
-            else:
-                waveform = waveform_mix
-
-        elif self.name == "DALI":
+        samples = librosa.time_to_samples(hf['tatum_time'][tatum_ids], sr=sr)
+        frames = librosa.time_to_frames(hf['tatum_time'][tatum_ids], sr=sr, hop_length=hop_length)
+        if pitch_shift == 0:
             waveform_mix = hf['waveform'][samples[0]: samples[1]]
-            waveform_sep = hf['waveform_separated'][samples[0]: samples[1]]
-            if self.separated:
-                waveform = waveform_sep
-            else:
-                waveform = waveform_mix
+            waveform_sep = hf_sep['waveform'][samples[0]: samples[1]]
+        else:
+            waveform_mix = hf[f"waveform_shifted_{pitch_shift}"][samples[0]: samples[1]]
+            waveform_sep = hf_sep[f"waveform_shifted_{pitch_shift}"][samples[0]: samples[1]]
+            
+        if self.separated:
+            waveform = waveform_sep
+        else:
+            waveform = waveform_mix
 
         if len(waveform) < samples[1] - samples[0]:
             waveform = np.pad(waveform, (0, samples[1] - samples[0]))
@@ -190,103 +134,19 @@ class MyDataset(torch.utils.data.Dataset):
         tatum_time -= tatum_time[0]
 
         # targets:
-        if self.frame_based:
-            midi_notes = hf['midi_notes'][:] if self.name == "RWC" else hf['annot_notes'][:]
-            pitches, onsets = self._create_frame_based_targets(midi_notes, sr, hop_length, input_features.shape[-1], frames, pitch_shift, pitch_offset)
-        else:
-            pitches = hf['pitch_tatums'][tatum_ids[0]: tatum_ids[1]]
-            pitches[pitches != 128] += pitch_shift + pitch_offset
-            pitches = np.clip(pitches, 0, 128)
-            pitches = self._pitch_to_zeroone(pitches)
-            onsets = hf['onset_tatums'][tatum_ids[0]: tatum_ids[1]]
+
+        pitches = hf['pitch_tatums'][tatum_ids[0]: tatum_ids[1]]
+        pitches[pitches != 128] += pitch_shift + pitch_offset
+        pitches = np.clip(pitches, 0, 128)
+        pitches = self._pitch_to_zeroone(pitches)
+        onsets = hf['onset_tatums'][tatum_ids[0]: tatum_ids[1]]
             
-            pitches = torch.tensor(pitches, dtype=torch.float)
-            onsets = torch.tensor(onsets, dtype=torch.float)
+        pitches = torch.tensor(pitches, dtype=torch.float)
+        onsets = torch.tensor(onsets, dtype=torch.float)
 
         return input_features, pitches, onsets, sr, hop_length, tatum_time
-
-    def _create_frame_based_targets(self, midi_notes, sr, hop_length, frame_length, frames, pitch_shift, pitch_offset):
-        pitches_frame = np.full(frame_length, 128, dtype=int)
-        onsets_frame = np.full(frame_length, 0, dtype=float)
-        for note in midi_notes:
-            start_frame, end_frame = librosa.time_to_frames(note[:2], sr=sr, hop_length=hop_length)
-            if start_frame >= frames[0] and start_frame < frames[1]:
-                start_frame -= frames[0]
-                end_frame -= frames[0]
-                pitches_frame[start_frame:end_frame] = note[-1]
-                onsets_frame[start_frame] = 1
-                if self.with_offset and end_frame < frame_length:
-                    onsets_frame[end_frame] = 1
-
-        pitches_frame[pitches_frame != 128] += pitch_shift + pitch_offset
-        pitches_frame = np.clip(pitches_frame, 0, 128)
-        pitches_frame = self._pitch_to_zeroone(pitches_frame)
-        
-        pitches_frame = torch.tensor(pitches_frame, dtype=torch.float)
-        onsets_frame = torch.tensor(onsets_frame, dtype=torch.float)
-
-        if self.pitch_filter is not None:
-            pitches_frame_value = self.pitch_filter(pitches_frame[:128, :].T.unsqueeze(1)).squeeze().T
-            pitches_frame_silence = pitches_frame[(128,), :]
-            pitches_frame = torch.cat([pitches_frame_value, pitches_frame_silence], dim=0)
-        if self.onset_filter is not None:
-            onsets_frame = self.onset_filter(onsets_frame[None, None, :]).squeeze()
-        
-        return pitches_frame, onsets_frame
 
     def _pitch_to_zeroone(self, pitches):
         new_pitches = np.zeros((129, len(pitches)))
         new_pitches[pitches, range(len(pitches))] = 1
         return new_pitches
-
-
-class MyLibriSpeechDataset(torch.utils.data.Dataset):
-    def __init__(self, root, transform, urls=["train-clean-360"], text_only=True, channels=1, **args):
-        super().__init__()
-        self.LibriSpeechDataset = torch.utils.data.ConcatDataset([
-            torchaudio.datasets.LIBRISPEECH(
-                root=root,
-                url=url,
-                download=True,
-            ) for url in urls
-        ])
-        self.target_type = "word"
-        self.codec = Mycodec(self.target_type)
-        self.text_only = text_only
-        self.transform = transform
-        self.channels=channels
-
-    def __len__(self):
-        return len(self.LibriSpeechDataset)
-
-    def __getitem__(self, i):
-        # waveform, sr, text, _ , _ , _ = self.LibriSpeechDataset[self.indexes[i]['index']]
-        waveform, sr, text, _ , _ , _ = self.LibriSpeechDataset[i]
-        text = text.lower()
-        
-        waveform = waveform.squeeze().numpy()
-        input_features = torch.tensor(self.transform(waveform, sr), dtype=torch.float)
-        if self.channels > 1:
-            input_features = input_features.unsqueeze(0).repeat_interleave(self.channels, dim=0)
-        
-        if self.target_type == "phoneme":
-            text = self.codec.phonemize(text)
-        text = self.codec.encode(text)
-        
-        if self.text_only:
-            return (
-                input_features,
-                torch.tensor(text, dtype=torch.int),
-                )
-        else:
-            frame_length = input_features.shape[-1]
-            pitches_frame = np.zeros((129, frame_length))
-            onsets_frame = np.zeros((frame_length,))
-            tatum_frames = [0,frame_length]
-            return (
-                input_features,
-                torch.tensor(pitches_frame, dtype=torch.float),
-                torch.tensor(onsets_frame, dtype=torch.float),
-                torch.tensor(text, dtype=torch.int),
-                torch.tensor(tatum_frames, dtype=torch.long),
-                )
