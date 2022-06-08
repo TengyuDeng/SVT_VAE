@@ -1,0 +1,8 @@
+---
+n_fold: 5
+sample_rate: 24000
+stft_paras:
+  n_fft: 2048
+  hop_length: 256
+
+segment_tatums: 80

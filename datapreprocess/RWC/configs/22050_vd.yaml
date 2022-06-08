@@ -1,0 +1,7 @@
+---
+n_fold: 5
+data_type: "vd"
+sample_rate: 22050 
+hop_length: 256
+
+segment_tatums: 80
