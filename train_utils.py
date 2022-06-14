@@ -156,13 +156,13 @@ class CrossEntropyLossWithProb:
         return self
     
     def __call__(self, inputs, targets):
-        # inputs: (N, C, ...)
-        # targets: (N, C, ...)
-        inputs = torch.log_softmax(inputs, dim=1)
+        # inputs: (N, ..., C)
+        # targets: (N, ..., C)
+        inputs = torch.log_softmax(inputs, dim=-1)
         loss = inputs * targets
         if self.weight is not None:
-            loss = (self.weight * loss.transpose(1, -1)).transpose(1, -1)
-        loss = - torch.sum(loss, dim=1)
+            loss = (self.weight * loss)
+        loss = - torch.sum(loss, dim=-1)
         return torch.mean(loss)
 
 class EarlyStopping:

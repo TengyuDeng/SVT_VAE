@@ -53,7 +53,7 @@ class CRNN_melody(nn.Module):
             ],
             )
 
-        self.rnn_pitch = RNNLayer(
+        self.rnn = RNNLayer(
             input_size=conv_channels[-1] * input_features, 
             hidden_size=num_classes_pitch + 1, 
             dropout=dropout,
@@ -75,19 +75,21 @@ class CRNN_melody(nn.Module):
         x = self.cnn(x)
         # x: (batch_size, num_channels=conv_channels, num_features, length)
         old_shape = x.shape
-        x_pitch = x.reshape(old_shape[0], old_shape[1] * old_shape[2], old_shape[3])
+        x = x.reshape(old_shape[0], old_shape[1] * old_shape[2], old_shape[3])
         # x: (batch_size, channel * num_features, length)
-        x_pitch = segment_csr(x_pitch, tatum_frames, reduce="max")
-        # x_pitch: (batch_size, num_channels=conv_channels * num_features, num_tatums)
+        # Pooling within tatums:
+        x = segment_csr(x, tatum_frames, reduce="max")
+        # x: (batch_size, num_channels=conv_channels * num_features, num_tatums)
 
-        x_pitch = x_pitch.permute(2, 0, 1)
-        # x_pitch: (num_tatums, batch_size, num_channels)
+        x = x.permute(2, 0, 1)
+        # x: (num_tatums, batch_size, num_channels)
 
-        x_pitch = self.rnn_pitch(x_pitch)
-        x_pitch = x_pitch[:,:,:self.num_classes_pitch + 1] + x_pitch[:,:,self.num_classes_pitch + 1:]
-        # x_pitch: (num_tatums, batch_size, num_classes + 1) -> (batch_size, num_classes + 1, num_tatums)
-        output_pitch = x_pitch.permute(1, 2, 0)
+        x = self.rnn(x)
+        x = x[:,:,:self.num_classes_pitch + 1] + x[:,:,self.num_classes_pitch + 1:]
+        # x: (num_tatums, batch_size, num_classes + 1) -> (batch_size, num_tatums, num_classes + 1)
+        output = x.transpose(0, 1)
       
-        return output_pitch
+        return output[:, :, :-1], output[:, :, -1]
 
-        # output_pitch: (batch_size, num_classes + 1, num_tatums)
+        # pitches_logits: (batch_size, num_tatums, num_pitches)
+        # onsets_logits: (batch_size, num_tatums)

@@ -17,14 +17,14 @@ def train_loop(data, model, loss_functions, optimizers, schedulers, loss_weights
     # torch.cuda.empty_cache()
     audio_features, pitches, onsets, input_lengths, tatum_frames = data
     audio_features = audio_features.to(DEVICE)
-    pitches = pitches.to(DEVICE)
+    pitches = pitches.transpose(-1, -2).to(DEVICE)
     onsets = onsets.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     # Forward melody
-    output_melody = model['melody'](audio_features, tatum_frames)
-    # output_melody: (batch_size, 129 + 1, length)
-    loss_pitch = loss_functions['pitch'](output_melody[:, :-1, :], pitches)
-    loss_onset = loss_functions['onset'](output_melody[:, -1, :], onsets)
+    pitches_logits, onsets_logits = model['melody'](audio_features, tatum_frames)
+    # output_melody: (batch_size, length, num_classes + 1)
+    loss_pitch = loss_functions['pitch'](pitches_logits, pitches)
+    loss_onset = loss_functions['onset'](onsets_logits, onsets)
 
     loss = loss_weights['pitch'] * loss_pitch + loss_weights['onset'] * loss_onset
     
@@ -43,18 +43,18 @@ def test_loop(data, model, dataloader_name):
     audio_features = audio_features.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     with torch.no_grad():
-        # Melody Part
-        # output_melody: (batch_size, num_classes + 1, length)
-        output_melody = model['melody'](audio_features, tatum_frames)
-        pitches_prob = torch.softmax(output_melody[:, :-1, :], dim=1)
-        onsets_prob = torch.sigmoid(output_melody[:, -1, :])
+        # pitches_logits: (batch_size, num_tatums, num_pitches)
+        # onsets_logits: (batch_size, num_tatums)
+        pitches_logits, onsets_logits = model['melody'](audio_features, tatum_frames)
+        pitches_prob = torch.softmax(pitches_logits, dim=-1)
+        onsets_prob = torch.sigmoid(onsets_logits)
 
     # Melody evaluation
     pitches = np.argmax(pitches.numpy(), axis=1)
 #     onsets = peakpicking(onsets.numpy(), window_size=1, threshold=0.3)
     onsets = onsets.numpy()
-    input_lengths = [tatum_frames.shape[1]] * tatum_frames.shape[0]
-    pitches_pre = np.argmax(pitches_prob.cpu().numpy(), axis=1)
+    # input_lengths = [tatum_frames.shape[1]] * tatum_frames.shape[0]
+    pitches_pre = np.argmax(pitches_prob.cpu().numpy(), axis=-1)
     onsets_pre = peakpicking(onsets_prob.cpu().numpy(), window_size=1, threshold=0.3)
     # onsets_pre = (onsets_prob.cpu().numpy() > 0.5).astype(int)
     note_results = evaluate_notes(pitches, onsets, pitches_pre, onsets_pre, input_lengths, sr=22050, hop_length=256)
