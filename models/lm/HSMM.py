@@ -2,9 +2,9 @@ import torch
 from torch import nn
 
 class HSMM(nn.Module):
-    def __init__(self, num_pitches=129):
+    def __init__(self, num_pitches=129, **args):
         super().__init__()
-        self.init_probs = torch.nn.Parameters(torch.randn(()))
+        self.init_probs = torch.nn.Parameter(torch.randn(()))
 
     def expected_log_prob(self, pitch_logits, onset_logits):
         """

@@ -1,7 +1,3 @@
-import os
-import sys
-sys.path.append("..")
-
 import numpy as np
 import torch, torchaudio
 import librosa
@@ -11,6 +7,9 @@ os.environ["HDF5_USE_FILE_LOCKING"] = 'FALSE'
 
 seed = 65324
 
+def vanila_transform(waveform, sr):
+    return waveform[None, :]
+    
 class ConvFilter:
     def __init__(self, half_length=5, v_max=1):
         self.padding = half_length - 1
@@ -31,11 +30,11 @@ class ConvFilter:
 
 class MyDataset(torch.utils.data.Dataset):
     
-    def __init__(self, indexes_path, hdf5s_dir, transform,
+    def __init__(self, indexes_path, hdf5s_dir, 
+        transform=vanila_transform,
+        target_transform=vanila_transform,
         name="RWC",
-        text_only=False,
-        frame_based=False,
-        pitch_shift=False, 
+        pitch_shift=False,
         separated=False,
         separated_and_mix=False,
         with_offset=False,
@@ -51,27 +50,28 @@ class MyDataset(torch.utils.data.Dataset):
 
         self.hdf5s_dir = hdf5s_dir
         self.transform = transform
+        self.target_transform = target_transform
+        
+        self.configs = {
+            'pitch_shift': pitch_shift,
+            'separated': separated,
+            'separated_and_mix': separated_and_mix,
+        }
 
-        self.text_only = text_only
-        self.frame_based = frame_based
-        self.pitch_shift = pitch_shift
-        self.separated = separated
-        self.separated_and_mix = separated_and_mix
-        self.with_offset = with_offset
         self.onset_filter = ConvFilter(**onset_filter) if onset_filter is not None else None
         self.pitch_filter = ConvFilter(**pitch_filter) if pitch_filter is not None else None
         self.rand = np.random.RandomState(seed)
 
     def __len__(self):
 
-        if self.pitch_shift:
+        if self.configs['pitch_shift']:
             return len(self.indexes) * 25
         else:
             return len(self.indexes)
 
     def __getitem__(self, i):
         # start_time = time.time()
-        index_id = i // 25 if self.pitch_shift else i
+        index_id = i // 25 if self.configs['pitch_shift'] else i
         track_id = self.indexes[index_id]['track_id']
         frames = None
         tatum_ids = self.indexes[index_id]['tatum_ids']
@@ -83,22 +83,27 @@ class MyDataset(torch.utils.data.Dataset):
 
         with h5py.File(hdf5_path, 'r') as hf:
             with h5py.File(hdf5_path_sep, 'r') as hf_sep:
-                input_features, pitches, onsets, sr, hop_length, tatum_time = self._get_data_from_hdf5(hf, pitch_offset, tatum_ids, hf_sep)
+                waveform_mix, waveform_sep, pitches, onsets, sr, hop_length, tatum_time = self._get_data_from_hdf5(hf, pitch_offset, tatum_ids, hf_sep)
+        
+        # input features:
+        input_features = self._get_transformed_features(waveform_mix, waveform_sep, sr, self.transform)
+        target_features = self._get_transformed_features(waveform_mix, waveform_sep, sr, self.target_transform)
 
         # tatum frames:
         tatum_frames = librosa.time_to_frames(tatum_time, sr=sr, hop_length=hop_length)
+        n_frames = tatum_frames[-1]
         # print(f"getitem using time {time.time() - start_time}")
-        
+
         # targets:
         return (
-            input_features, pitches, onsets,
+            input_features[..., :n_frames], target_features[..., :n_frames], pitches, onsets,
             torch.tensor(tatum_frames, dtype=torch.long),
             )
 
     def _get_data_from_hdf5(self, hf, pitch_offset, tatum_ids, hf_sep):
         sr = hf.attrs['sample_rate']
         hop_length = hf.attrs['hop_length']
-        pitch_shift = list(range(-12, 13))[i % 25] if self.pitch_shift else 0
+        pitch_shift = list(range(-12, 13))[i % 25] if self.configs['pitch_shift'] else 0
 
         # waveform:
         samples = librosa.time_to_samples(hf['tatum_time'][tatum_ids], sr=sr)
@@ -109,26 +114,10 @@ class MyDataset(torch.utils.data.Dataset):
         else:
             waveform_mix = hf[f"waveform_shifted_{pitch_shift}"][samples[0]: samples[1]]
             waveform_sep = hf_sep[f"waveform_shifted_{pitch_shift}"][samples[0]: samples[1]]
-            
-        if self.separated:
-            waveform = waveform_sep
-        else:
-            waveform = waveform_mix
 
-        if len(waveform) < samples[1] - samples[0]:
-            waveform = np.pad(waveform, (0, samples[1] - samples[0]))
-
-        # input features:
-        if self.separated_and_mix:
-            input_features_sep = torch.tensor(self.transform(waveform_sep, sr), dtype=torch.float)
-            input_features_mix = torch.tensor(self.transform(waveform_mix, sr), dtype=torch.float)
-            if input_features_sep.ndim == 3:
-                input_features = torch.cat([input_features_sep, input_features_mix], dim=0)
-            else:
-                input_features = torch.stack([input_features_sep, input_features_mix])
-        else:
-            input_features = torch.tensor(self.transform(waveform, sr), dtype=torch.float)
-            
+        # if len(waveform) < samples[1] - samples[0]:
+        #     waveform = np.pad(waveform, (0, samples[1] - samples[0]))
+        
         # tatum:
         tatum_time = hf['tatum_time'][tatum_ids[0]: tatum_ids[1] + 1]
         tatum_time -= tatum_time[0]
@@ -144,9 +133,23 @@ class MyDataset(torch.utils.data.Dataset):
         pitches = torch.tensor(pitches, dtype=torch.float)
         onsets = torch.tensor(onsets, dtype=torch.float)
 
-        return input_features, pitches, onsets, sr, hop_length, tatum_time
+        return waveform_mix, waveform_sep, pitches, onsets, sr, hop_length, tatum_time
 
     def _pitch_to_zeroone(self, pitches):
         new_pitches = np.zeros((129, len(pitches)))
         new_pitches[pitches, range(len(pitches))] = 1
         return new_pitches
+    
+    def _get_transformed_features(self, waveform_mix, waveform_sep, sr, transform):
+        if self.configs['separated_and_mix']:
+            features_sep = torch.tensor(transform(waveform_sep, sr), dtype=torch.float)
+            features_mix = torch.tensor(transform(waveform_mix, sr), dtype=torch.float)
+            if features_sep.ndim == 3:
+                features = torch.cat([features_sep, features_mix], dim=0)
+            else:
+                features = torch.stack([features_sep, features_mix])
+        else:
+            waveform = waveform_sep if self.configs['separated'] else waveform_mix
+            features = torch.tensor(transform(waveform, sr), dtype=torch.float)
+
+        return features

@@ -2,33 +2,34 @@ import argparse
 import torch
 import os, pickle, re
 
-from datasets import get_dataloaders
-from models import get_model
-from language_models import get_language_model
-from utils import *
-from train_utils import *
-from VAE import VAE
+from .datasets import get_dataloaders
+from .models import get_model, get_language_model
+from .utils import *
+from .train_utils import *
+from .vae import VAE
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {DEVICE}.")
 
 @train_loop_decorator
-def train_loop(data, model, language_model, VAE_trainer, optimizers, schedulers, loss_weights):
+def train_loop(data, model, VAE_trainer, optimizers, schedulers, loss_weights, supervised=True):
     for optimizer in optimizers:
         optimizer.zero_grad()
     # torch.cuda.empty_cache()
-    # reconst_target_features = ????????????????????
-    audio_features, pitches, onsets, input_lengths, tatum_frames = data
-    audio_features = audio_features.to(DEVICE)
+    input_features, target_features, pitches, onsets, input_lengths, tatum_frames = data
+    input_features = input_features.to(DEVICE)
+    target_features = target_features.to(DEVICE)
     pitches = pitches.to(DEVICE)
     onsets = onsets.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     # Forward melody
     loss = VAE_trainer(
-        audio_features, 
-        reconst_target_features,
-        supervised=True,
-        pitch=pitches, 
+        input_features, 
+        target_features.transpose(-1, -2),
+        input_lengths,
+        tatum_frames,
+        supervised=supervised,
+        pitch=pitches.transpose(-1, -2),
         onset=onsets,
         )
 
@@ -43,13 +44,13 @@ def train_loop(data, model, language_model, VAE_trainer, optimizers, schedulers,
 
 @test_loop_decorator
 def test_loop(data, model, dataloader_name):
-    audio_features, pitches, onsets, input_lengths, tatum_frames = data
-    audio_features = audio_features.to(DEVICE)
+    input_features, target_features, pitches, onsets, input_lengths, tatum_frames = data
+    input_features = input_features.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     with torch.no_grad():
         # pitches_logits: (batch_size, num_tatums, num_pitches)
         # onsets_logits: (batch_size, num_tatums)
-        pitches_logits, onsets_logits = model['melody'](audio_features, tatum_frames)
+        pitches_logits, onsets_logits = model['melody'](input_features, tatum_frames)
         pitches_prob = torch.softmax(pitches_logits, dim=-1)
         onsets_prob = torch.sigmoid(onsets_logits)
 
@@ -80,7 +81,7 @@ def main(args):
     model = {}
     for model_name in configs["model"]:
         if model_name == "language_model":
-            model[model_name] = get_language_model(num_classes_pitch=129, **configs["language_model"])
+            model[model_name] = get_language_model(num_classes_pitch=129, **configs["model"][model_name])
         else:
             model[model_name] = get_model(num_classes_pitch=129, **configs["model"][model_name])
         model[model_name] = model[model_name].to(DEVICE)
@@ -103,12 +104,12 @@ def main(args):
     es_mode = training_configs['early_stop_mode']
     es_index = training_configs['early_stop_index']
     loss_weights = training_configs['loss_weights']
+    supervised = training_configs['supervised']
     reduce_lr_steps = training_configs['reduce_lr_steps'] if 'reduce_lr_steps' in training_configs else None
     epoch_0 = training_configs['continue_epoch'] if 'continue_epoch' in training_configs else 0
     
     VAE_trainer =  VAE(
-        model['z_est'], model['p_n_est'], 
-        model['x_reconst'], model['language_model'], 
+        model['z_pre'], model['melody'], model['reconst'], model['language_model'], 
         loss_weights=loss_weights
         )
 
@@ -163,6 +164,7 @@ def main(args):
                 optimizers=optimizers,
                 schedulers=schedulers,
                 loss_weights=loss_weights,
+                supervised = [True, False][epoch % 2] if supervised == "mix" else supervised,
             )
         
         for model_name in model:

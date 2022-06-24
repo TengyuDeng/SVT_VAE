@@ -2,10 +2,10 @@ import argparse
 import torch
 import os, pickle, re
 
-from datasets import get_dataloaders
-from models import get_model
-from utils import *
-from train_utils import *
+from .datasets import get_dataloaders
+from .models import get_model
+from .utils import *
+from .train_utils import *
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {DEVICE}.")
@@ -15,13 +15,13 @@ def train_loop(data, model, loss_functions, optimizers, schedulers, loss_weights
     for optimizer in optimizers:
         optimizer.zero_grad()
     # torch.cuda.empty_cache()
-    audio_features, pitches, onsets, input_lengths, tatum_frames = data
-    audio_features = audio_features.to(DEVICE)
+    input_features, _, pitches, onsets, input_lengths, tatum_frames = data
+    input_features = input_features.to(DEVICE)
     pitches = pitches.transpose(-1, -2).to(DEVICE)
     onsets = onsets.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     # Forward melody
-    pitches_logits, onsets_logits = model['melody'](audio_features, tatum_frames)
+    pitches_logits, onsets_logits = model['melody'](input_features, tatum_frames)
     # output_melody: (batch_size, length, num_classes + 1)
     loss_pitch = loss_functions['pitch'](pitches_logits, pitches)
     loss_onset = loss_functions['onset'](onsets_logits, onsets)
@@ -39,13 +39,13 @@ def train_loop(data, model, loss_functions, optimizers, schedulers, loss_weights
 
 @test_loop_decorator
 def test_loop(data, model, dataloader_name):
-    audio_features, pitches, onsets, input_lengths, tatum_frames = data
-    audio_features = audio_features.to(DEVICE)
+    input_features, _, pitches, onsets, input_lengths, tatum_frames = data
+    input_features = input_features.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     with torch.no_grad():
         # pitches_logits: (batch_size, num_tatums, num_pitches)
         # onsets_logits: (batch_size, num_tatums)
-        pitches_logits, onsets_logits = model['melody'](audio_features, tatum_frames)
+        pitches_logits, onsets_logits = model['melody'](input_features, tatum_frames)
         pitches_prob = torch.softmax(pitches_logits, dim=-1)
         onsets_prob = torch.sigmoid(onsets_logits)
 
@@ -111,7 +111,7 @@ def main(args):
     'onset': torch.nn.BCEWithLogitsLoss().to(DEVICE),
     }
     loss_functions = set_weights(loss_functions, training_configs, device=DEVICE)
-
+    
     optimizers = [
     torch.optim.Adam(
         filter(lambda param : param.requires_grad, model[model_name].parameters()),

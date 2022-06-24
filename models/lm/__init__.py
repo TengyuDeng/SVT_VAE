@@ -1,7 +1,9 @@
 from .HSMM import HSMM
+from .Vanila import Vanila
 
 model_list = {
     "HSMM": HSMM,
+    "Vanila": Vanila,
 }
 def get_language_model(**configs):
     

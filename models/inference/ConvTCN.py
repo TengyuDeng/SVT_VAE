@@ -1,13 +1,13 @@
 import sys
 sys.path.append("..")
-from utils import downsample_length, get_padding
 
 from torch import nn
 from torch_scatter import segment_csr
-from .layers import *
+from ..basic.CNN import ConvNN
+from ..basic.TCN import TemporalConvNet
 
 
-class CRNN_melody(nn.Module):
+class ConvTCN(nn.Module):
 
     def __init__(
         self,
@@ -17,12 +17,13 @@ class CRNN_melody(nn.Module):
         num_convs=6,
         conv_channels=[64, 32, 32, 32, 32, 1],
         kernel_sizes=[5, 5, 3, 3, 3, 1],
+        tcn_channels=[128, 128, 128],
+        tcn_kernel=2,
         dropout=0.,
-        lstm_channels=512,
         **args
         ):
 
-        super(CRNN_melody, self).__init__()
+        super().__init__()
 
         if len(conv_channels) != num_convs:
             raise ValueError(f"Expect conv_channels to have {num_convs} elements but got {len(conv_channels)}!")
@@ -35,27 +36,19 @@ class CRNN_melody(nn.Module):
         self.conv_channels = conv_channels
         self.kernel_sizes = kernel_sizes
         
-        self.cnn = nn.Sequential(
-            nn.Conv2d(
-                in_channels=input_channels,
-                out_channels=conv_channels[0], 
-                kernel_size=kernel_sizes[0], 
-                padding=get_padding(kernel_sizes[0]),
-                ),
-            *[
-            ResCNNLayer(
-                in_channels=conv_channels[i - 1], 
-                out_channels=conv_channels[i], 
-                kernel_size=kernel_sizes[i],
-                dropout=dropout,
-                )
-            for i in range(1, num_convs)
-            ],
-            )
+        self.cnn = ConvNN(
+            input_channels=input_channels,
+            num_convs=num_convs,
+            conv_channels=conv_channels,
+            kernel_sizes=kernel_sizes,
+            dropout=dropout,
+        )
 
-        self.rnn = RNNLayer(
+        tcn_channels.append(num_classes_pitch + 1)
+        self.tcn = TemporalConvNet(
             input_size=conv_channels[-1] * input_features, 
-            hidden_size=num_classes_pitch + 1, 
+            num_channels=tcn_channels,
+            kernel_size=tcn_kernel,
             dropout=dropout,
         )
 
@@ -66,8 +59,6 @@ class CRNN_melody(nn.Module):
         # if tatum_frames.shape[-1] != self.num_tatums + 1:
         #     raise ValueError(f"Length of tatum_frames not match! expected{self.num_tatums + 1} but got {tatum_frames.shape[-1]}")
         
-        if self.input_channels == 1:
-            x = x.unsqueeze(-3)
         tatum_frames = tatum_frames.unsqueeze(-2)
         # x: (batch_size, num_channels, num_features, length)
         # tatum_frames: (batch_size, num_channels=1, num_tatums + 1)
@@ -81,13 +72,8 @@ class CRNN_melody(nn.Module):
         x = segment_csr(x, tatum_frames, reduce="max")
         # x: (batch_size, num_channels=conv_channels * num_features, num_tatums)
 
-        x = x.permute(2, 0, 1)
-        # x: (num_tatums, batch_size, num_channels)
-
-        x = self.rnn(x)
-        x = x[:,:,:self.num_classes_pitch + 1] + x[:,:,self.num_classes_pitch + 1:]
-        # x: (num_tatums, batch_size, num_classes + 1) -> (batch_size, num_tatums, num_classes + 1)
-        output = x.transpose(0, 1)
+        output = self.tcn(x).transpose(-1, -2)
+        # output: (batch_size, num_tatums, num_classes + 1)
       
         return output[:, :, :-1], output[:, :, -1]
 
