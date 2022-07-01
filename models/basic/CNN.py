@@ -1,8 +1,11 @@
-import sys
-sys.path.append("..")
-from utils import get_padding
-
 from torch import nn
+
+def get_padding(kernel_size):
+    if isinstance(kernel_size, int):
+        padding = kernel_size // 2
+    else:
+        padding = tuple(x // 2 for x in kernel_size)
+    return padding
 
 class CNNLayer(nn.Module):
 

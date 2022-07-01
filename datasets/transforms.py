@@ -17,6 +17,17 @@ def get_transform(feature_type, params):
         def transform(waveform, sr):
             mel_features = librosa.feature.melspectrogram(y=waveform, sr=sr, **params)
             return mel_features
+    
+    elif feature_type == "stft":
+        def transform(waveform, sr):
+            features = np.abs(librosa.stft(y=waveform, **params)) ** 2
+            return features
+
+    elif feature_type == "logstft":
+        def transform(waveform, sr):
+            features = np.abs(librosa.stft(y=waveform, **params)) ** 2
+            return librosa.power_to_db(features)
+
 
     # elif feature_type == "logspectrogram":
     #     def transform(waveform, sr):

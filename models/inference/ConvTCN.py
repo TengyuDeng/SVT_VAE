@@ -11,7 +11,7 @@ class ConvTCN(nn.Module):
 
     def __init__(
         self,
-        num_classes_pitch,
+        num_classes_pitch=129,
         input_features=80,
         input_channels=1,
         num_convs=6,

@@ -2,10 +2,10 @@ import argparse
 import torch
 import os, pickle, re
 
-from .datasets import get_dataloaders
-from .models import get_model
-from .utils import *
-from .train_utils import *
+from datasets import get_dataloaders
+from models import get_model
+from utils import *
+from train_utils import *
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {DEVICE}.")
@@ -76,7 +76,7 @@ def main(args):
     # Get model
     model = {}
     for model_name in configs["model"]:
-        model[model_name] = get_model(num_classes_pitch=129, **configs["model"][model_name])
+        model[model_name] = get_model(**configs["model"][model_name])
         model[model_name] = model[model_name].to(DEVICE)
         os.makedirs(os.path.join(checkpoints_dir, model_name), exist_ok=True)
     # if torch.cuda.DEVICE_count() > 1:

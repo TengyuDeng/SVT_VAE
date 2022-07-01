@@ -6,33 +6,69 @@ from datasets import get_dataloaders
 from models import get_model, get_language_model
 from utils import *
 from train_utils import *
-from vae import VAE
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {DEVICE}.")
 
+def mse_loss(reconst, target_features, input_lengths):
+    for i in range(len(input_lengths)):
+
+        if i == 0:
+            loss = torch.sum((reconst[i, :, :input_lengths[i]] - target_features[i, :, :input_lengths[i]]) ** 2)
+        else:
+            loss += torch.sum((reconst[i, :, :input_lengths[i]] - target_features[i, :, :input_lengths[i]]) ** 2)
+
+    loss /= torch.sum(input_lengths) * target_features.shape[1]
+    return loss
+
+def mae_loss(reconst, target_features, input_lengths):
+    for i in range(len(input_lengths)):
+
+        if i == 0:
+            loss = torch.sum(torch.abs(reconst[i, :, :input_lengths[i]] - target_features[i, :, :input_lengths[i]]))
+        else:
+            loss += torch.sum(torch.abs(reconst[i, :, :input_lengths[i]] - target_features[i, :, :input_lengths[i]]))
+
+    loss /= torch.sum(input_lengths) * target_features.shape[1]
+    return loss
+
 @train_loop_decorator
-def train_loop(data, model, VAE_trainer, optimizers, schedulers, loss_weights, supervised=True):
+def train_loop(data, model, optimizers, schedulers, loss_functions, loss_weights, reconst_only=False):
     for optimizer in optimizers:
         optimizer.zero_grad()
     # torch.cuda.empty_cache()
     input_features, target_features, pitches, onsets, input_lengths, tatum_frames = data
     input_features = input_features.to(DEVICE)
     target_features = target_features.to(DEVICE)
-    pitches = pitches.to(DEVICE)
+    pitches = pitches.transpose(-1, -2).to(DEVICE)
     onsets = onsets.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     # Forward melody
-    loss = VAE_trainer(
-        input_features, 
-        target_features.transpose(-1, -2),
-        input_lengths,
-        tatum_frames,
-        supervised=supervised,
-        pitch=pitches.transpose(-1, -2),
-        onset=onsets,
-        )
+    pitches_logits, onsets_logits = model['melody'](input_features, tatum_frames)
+    loss_pitch = loss_functions['pitch'](pitches_logits, pitches)
+    loss_onset = loss_functions['onset'](onsets_logits, onsets)
+    
+    # The reconstruction loss
+    if reconst_only:
+        pitches_pre = pitches
+        onsets_pre = onsets
+    else:
+        pitches_pre = hardmax(pitches_logits, dim=-1)
+        onsets_pre = hardmax_bernoulli(onsets_logits, threshold=0.5)
+    pitches_rendered = model['rendering'](pitches_pre[..., :-1])
+    reconst = adjust_shape(model['reconst'](pitches_rendered, onsets_pre, tatum_frames).transpose(-1, -2), target_features)
+    # loss_reconst = torch.mean((target_features != 0) * (target_features - reconst) ** 2)
+    # loss_reconst = torch.mean(((target_features - reconst)[target_features != 0]) ** 2)
+    
+    loss_reconst = mse_loss(reconst, target_features, input_lengths)
 
+    if reconst_only:
+        loss = loss_weights['reconst'] * loss_reconst
+    else:
+        if loss_weights['reconst'] == 0.:
+            loss = loss_weights['pitch'] * loss_pitch + loss_weights['onset'] * loss_onset
+        else:
+            loss = loss_weights['pitch'] * loss_pitch + loss_weights['onset'] * loss_onset + loss_weights['reconst'] * loss_reconst
     # Backprop
     loss.backward()
     for optimizer in optimizers:
@@ -43,27 +79,42 @@ def train_loop(data, model, VAE_trainer, optimizers, schedulers, loss_weights, s
     return loss.item()
 
 @test_loop_decorator
-def test_loop(data, model, dataloader_name):
+def test_loop(data, model, dataloader_name, reconst_only=False):
     input_features, target_features, pitches, onsets, input_lengths, tatum_frames = data
     input_features = input_features.to(DEVICE)
+    target_features = target_features.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     with torch.no_grad():
         # pitches_logits: (batch_size, num_tatums, num_pitches)
         # onsets_logits: (batch_size, num_tatums)
         pitches_logits, onsets_logits = model['melody'](input_features, tatum_frames)
-        pitches_prob = torch.softmax(pitches_logits, dim=-1)
-        onsets_prob = torch.sigmoid(onsets_logits)
+        # pitches_prob = torch.softmax(pitches_logits, dim=-1)
+        # onsets_prob = torch.sigmoid(onsets_logits)
+        if reconst_only:
+            pitches_pre = pitches.transpose(-1, -2).to(DEVICE)
+            onsets_pre = onsets.to(DEVICE)
+        else:
+            pitches_pre = hardmax(pitches_logits, dim=-1)
+            onsets_pre = hardmax_bernoulli(onsets_logits, threshold=0.5)
+
+        pitches_rendered = model['rendering'](pitches_pre[..., :-1])
+        reconst = adjust_shape(model['reconst'](pitches_rendered, onsets_pre, tatum_frames).transpose(-1, -2), target_features)
+        # loss_reconst = torch.mean((target_features != 0) * (target_features - reconst) ** 2).detach().cpu().item()
+        # loss_reconst = torch.mean(((target_features - reconst)[target_features != 0]) ** 2).detach().cpu().item()
+        loss_reconst = mse_loss(reconst, target_features, input_lengths).detach().cpu().item()
 
     # Melody evaluation
     pitches = np.argmax(pitches.numpy(), axis=1)
 #     onsets = peakpicking(onsets.numpy(), window_size=1, threshold=0.3)
     onsets = onsets.numpy()
-    pitches_pre = np.argmax(pitches_prob.cpu().numpy(), axis=-1)
-    onsets_pre = peakpicking(onsets_prob.cpu().numpy(), window_size=1, threshold=0.3)
+    pitches_pre = np.argmax(pitches_pre.cpu().numpy(), axis=-1)
+    onsets_pre = onsets_pre.cpu().numpy()
+    # pitches_pre = np.argmax(pitches_prob.cpu().numpy(), axis=-1)
+    # onsets_pre = peakpicking(onsets_prob.cpu().numpy(), window_size=1, threshold=0.3)
     # onsets_pre = (onsets_prob.cpu().numpy() > 0.5).astype(int)
     note_results = evaluate_notes(pitches, onsets, pitches_pre, onsets_pre, input_lengths, sr=22050, hop_length=256)
     # frame_err = evaluate_frames_batch(pitches, pitches_pre, input_lengths)
-    return note_results[2], note_results[5], note_results[8]
+    return note_results[2], note_results[5], note_results[8], loss_reconst
 
 def main(args):
 
@@ -92,6 +143,7 @@ def main(args):
 
     # Loss, optimizer, and scheduler
     training_configs = configs["training"]
+    reconst_only = training_configs['reconst_only']
     error_names = training_configs['error_names']
     if 'resume_checkpoint' in training_configs:
         for model_name in training_configs['resume_checkpoint']:
@@ -104,25 +156,36 @@ def main(args):
     es_mode = training_configs['early_stop_mode']
     es_index = training_configs['early_stop_index']
     loss_weights = training_configs['loss_weights']
-    supervised = training_configs['supervised']
     reduce_lr_steps = training_configs['reduce_lr_steps'] if 'reduce_lr_steps' in training_configs else None
     epoch_0 = training_configs['continue_epoch'] if 'continue_epoch' in training_configs else 0
     
-    VAE_trainer =  VAE(
-        model['z_pre'], model['melody'], model['reconst'], model['language_model'], 
-        loss_weights=loss_weights
-        )
-
-    optimizers = [
-    torch.optim.Adam(
+    loss_functions = {
+    'pitch': CrossEntropyLossWithProb().to(DEVICE),
+    'onset': torch.nn.BCEWithLogitsLoss().to(DEVICE),
+    }
+    loss_functions = set_weights(loss_functions, training_configs, device=DEVICE)
+    
+    optimizers = []
+    for model_name in model:
+        if model_name != "rendering":
+            optimizers.append(torch.optim.Adam(
         filter(lambda param : param.requires_grad, model[model_name].parameters()),
         lr=learning_rate,
         betas=(0.9, 0.999),
         eps=1e-8,
         weight_decay=0.0,
         amsgrad=True,
-        ) for model_name in model
-    ]
+        ))
+    # optimizers = [
+    # torch.optim.Adam(
+    #     filter(lambda param : param.requires_grad, model[model_name].parameters()),
+    #     lr=learning_rate,
+    #     betas=(0.9, 0.999),
+    #     eps=1e-8,
+    #     weight_decay=0.0,
+    #     amsgrad=True,
+    #     ) for model_name in model
+    # ]
     
     lr_lambda = lambda step : get_lr_lambda(step, warm_up_steps=warm_up_steps, reduce_lr_steps=reduce_lr_steps)
     schedulers = [
@@ -144,6 +207,7 @@ def main(args):
                 statistics_dir=statistics_dir,
                 epoch=epoch,
                 val=True,
+                reconst_only=reconst_only,
                 )
             if dataloader_name == es_monitor:
                 if early_stop(statistics['errors'][es_index]):
@@ -160,11 +224,11 @@ def main(args):
                 model=model,
                 statistics_dir=statistics_dir,
                 epoch=epoch + 1,
-                VAE_trainer=VAE_trainer,
                 optimizers=optimizers,
                 schedulers=schedulers,
+                loss_functions=loss_functions,
                 loss_weights=loss_weights,
-                supervised = [True, False][epoch % 2] if supervised == "mix" else supervised,
+                reconst_only=reconst_only,
             )
         
         for model_name in model:
@@ -184,6 +248,7 @@ def main(args):
             statistics_dir=None,
             epoch=None,
             val=False,
+            reconst_only=reconst_only,
             )
         test_statistics[dataloader_name] = statistics_dict
     print(test_statistics)

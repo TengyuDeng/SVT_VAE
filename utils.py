@@ -2,6 +2,7 @@ import os
 import yaml
 import numpy as np
 import torch
+from torch import nn
 import librosa
 # from g2p_en import G2p
 import textdistance
@@ -35,6 +36,53 @@ def freq2pitch(freq, datatype="np"):
 def pitch2freq(class_id):
 
     return (440. * 2 ** ((class_id - 69) / 12)) * (class_id != 128) + (1e-3) * (class_id == 128)
+
+# Sampling with discrete distributions (hard)
+def hardmax(logits, dim=-1):
+    index = logits.argmax(dim=dim, keepdim=True)
+    y_soft = torch.nn.functional.softmax(logits, dim=dim)
+    y_hard = torch.zeros_like(logits).scatter_(dim, index, 1.0)
+    return y_hard - y_soft.detach() + y_soft
+
+def hardmax_bernoulli(logits, threshold=0.5):
+    y_soft = torch.sigmoid(logits)
+    y_hard = torch.zeros_like(logits)
+    y_hard[y_soft > threshold] = 1.
+    return y_hard - y_soft.detach() + y_soft
+
+def adjust_shape(x, ref):
+    """
+    Inputs: 
+      x: (batch_size, channel_x, H_x, W_x)
+      ref: (batch_size, channel_ref, H_ref, W_ref)
+    Returns:
+      x_adjusted: (batch_size, channel_ref, H_ref, W_ref)
+    Only appliable when 
+    (H_x - H_ref) * (W_x - W_ref) >= 0
+    """
+    H_x, W_x = x.shape[-2:]
+    H_ref, W_ref = ref.shape[-2:]
+    if (H_x - H_ref) * (W_x - W_ref) < 0:
+        raise ValueError(f"Wrong shapes: {x.shape}, {ref.shape}")
+    
+    if H_x >= H_ref:
+        return x[..., :H_ref, :W_ref]
+    else:
+        padding = (0, W_ref - W_x, 0, H_ref - H_x)
+        return nn.ZeroPad2d(padding)(x)
+
+# Upsampling
+def repeat_with_tatums(features, tatum_frames):
+    """
+    Input:
+      features: (batch_size, num_tatums, num_features)
+      tatum_frames: (batch_size, num_tatums + 1)
+    Return:
+      features_repeat: (batch_size, max(tatum_frames[:, -1]), num_features)
+    """
+    batch_size = features.shape[0]
+    new_features = [features[i, ...].repeat_interleave(torch.diff(tatum_frames[i]), dim=0) for i in range(batch_size)]
+    return torch.nn.utils.rnn.pad_sequence(new_features, batch_first=True)
 
 # Evaluate based on frames
 def tatums_to_frames(feature_tatums, tatum_frames, frame_length=None, fill_value=0):

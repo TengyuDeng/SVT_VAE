@@ -4,14 +4,14 @@ from utils import downsample_length, get_padding
 
 from torch import nn
 from torch_scatter import segment_csr
-from .basic.CNN import ConvNN
-from .basic.RNN import RNNLayer
+from ..basic.CNN import ConvNN
+from ..basic.RNN import RNNLayer
 
 class CRNN_melody(nn.Module):
 
     def __init__(
         self,
-        num_classes_pitch,
+        num_classes_pitch=129,
         input_features=80,
         input_channels=1,
         num_convs=6,
