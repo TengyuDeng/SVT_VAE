@@ -1,9 +1,14 @@
-from .datasets import *
+from .datasets import RWCDataset, DALIDataset
 from .collate_fns import get_collate_fn
 from .transforms import get_transform
 import os
 
 num_workers = 8
+
+dataset_classes = {
+    "RWC": RWCDataset,
+    "DALI": DALIDataset,
+}
 
 def get_dataloaders(configs):
     
@@ -49,8 +54,7 @@ def get_dataloader(configs, transform, target_transform, train):
 
 def get_dataset(dataset_type, configs, transform, target_transform, train):
 
-    dataset = MyDataset(
-        name=dataset_type,
+    dataset = dataset_classes[dataset_type](
         transform=transform,
         target_transform=target_transform,
         **configs

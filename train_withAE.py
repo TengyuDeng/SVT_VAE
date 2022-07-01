@@ -37,7 +37,7 @@ def train_loop(data, model, optimizers, schedulers, loss_functions, loss_weights
     for optimizer in optimizers:
         optimizer.zero_grad()
     # torch.cuda.empty_cache()
-    input_features, target_features, pitches, onsets, input_lengths, tatum_frames = data
+    input_features, target_features, pitches, onsets, input_lengths, tatum_frames, _, _ = data
     input_features = input_features.to(DEVICE)
     target_features = target_features.to(DEVICE)
     pitches = pitches.transpose(-1, -2).to(DEVICE)
@@ -80,7 +80,7 @@ def train_loop(data, model, optimizers, schedulers, loss_functions, loss_weights
 
 @test_loop_decorator
 def test_loop(data, model, dataloader_name, reconst_only=False):
-    input_features, target_features, pitches, onsets, input_lengths, tatum_frames = data
+    input_features, target_features, pitches, onsets, input_lengths, tatum_frames, _, _ = data
     input_features = input_features.to(DEVICE)
     target_features = target_features.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)

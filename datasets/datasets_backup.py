@@ -77,6 +77,8 @@ class MyDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         # start_time = time.time()
+
+        # _get_index: return positions, hdf5_paths, text
         if self.name == "RWC":
             index_id = i // 25 if self.pitch_shift else i
             track_id = self.indexes[index_id]['track_id']
@@ -139,6 +141,8 @@ class MyDataset(torch.utils.data.Dataset):
                 )
 
     def _get_data_from_hdf5(self, hf, pitch_offset, tatum_ids, frames, hf_sep=None):
+        # _get_waveform: Return waveform
+        # _get_data: Return 
         sr = hf.attrs['sample_rate']
         hop_length = hf.attrs['hop_length']
         pitch_shift = list(range(-12, 13))[i % 25] if self.pitch_shift else 0

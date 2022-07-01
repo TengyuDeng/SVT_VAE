@@ -16,7 +16,7 @@ def train_loop(data, model, VAE_trainer, optimizers, schedulers, loss_weights, s
     for optimizer in optimizers:
         optimizer.zero_grad()
     # torch.cuda.empty_cache()
-    input_features, target_features, pitches, onsets, input_lengths, tatum_frames = data
+    input_features, target_features, pitches, onsets, input_lengths, tatum_frames, _, _ = data
     input_features = input_features.to(DEVICE)
     target_features = target_features.to(DEVICE)
     pitches = pitches.to(DEVICE)
@@ -44,7 +44,7 @@ def train_loop(data, model, VAE_trainer, optimizers, schedulers, loss_weights, s
 
 @test_loop_decorator
 def test_loop(data, model, dataloader_name):
-    input_features, target_features, pitches, onsets, input_lengths, tatum_frames = data
+    input_features, target_features, pitches, onsets, input_lengths, tatum_frames, _, _ = data
     input_features = input_features.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     with torch.no_grad():
