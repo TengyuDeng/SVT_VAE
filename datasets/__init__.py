@@ -1,13 +1,14 @@
-from .datasets import RWCDataset, DALIDataset
+from .datasets import RWCDataset, DALIDataset, MyLibriSpeechDataset
 from .collate_fns import get_collate_fn
 from .transforms import get_transform
-import os
+import os, torch
 
 num_workers = 8
 
 dataset_classes = {
     "RWC": RWCDataset,
     "DALI": DALIDataset,
+    "LibriSpeech": MyLibriSpeechDataset, 
 }
 
 def get_dataloaders(configs):
@@ -34,10 +35,10 @@ def get_dataloaders(configs):
     return train_dataloaders, val_dataloaders, test_dataloaders
 
 def get_dataloader(configs, transform, target_transform, train):
-    
-    dataset_type = configs["type"]
-    collate_fn = get_collate_fn(configs["collate_fn"])
-    batch_size = configs["batch_size"]
+    configs = configs.copy()
+    dataset_type = configs.pop("type")
+    collate_fn = get_collate_fn(configs.pop("collate_fn"))
+    batch_size = configs.pop("batch_size")
 
     dataset = get_dataset(dataset_type, configs, transform, target_transform, train)
 

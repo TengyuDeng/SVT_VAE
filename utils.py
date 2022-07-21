@@ -25,7 +25,12 @@ def remove_space(lst):
     return list(filter(lambda x:x!=' ', lst))
     
 def mycer(ref, pre):
-    return textdistance.levenshtein.distance(ref, pre) / len(ref)
+    ref = ref.tolist()
+    pre = pre.tolist()
+    if len(ref) == 0:
+        return 0
+    else:
+        return textdistance.levenshtein.distance(ref, pre) / len(ref)
 
 def freq2pitch(freq, datatype="np"):
     if datatype == "np":
@@ -50,7 +55,7 @@ def hardmax_bernoulli(logits, threshold=0.5):
     y_hard[y_soft > threshold] = 1.
     return y_hard - y_soft.detach() + y_soft
 
-def adjust_shape(x, ref):
+def adjust_shape(x, ref, ref_shape=None):
     """
     Inputs: 
       x: (batch_size, channel_x, H_x, W_x)
@@ -61,7 +66,10 @@ def adjust_shape(x, ref):
     (H_x - H_ref) * (W_x - W_ref) >= 0
     """
     H_x, W_x = x.shape[-2:]
-    H_ref, W_ref = ref.shape[-2:]
+    if ref_shape is not None:
+        H_ref, W_ref = ref_shape
+    else:
+        H_ref, W_ref = ref.shape[-2:]
     if (H_x - H_ref) * (W_x - W_ref) < 0:
         raise ValueError(f"Wrong shapes: {x.shape}, {ref.shape}")
     

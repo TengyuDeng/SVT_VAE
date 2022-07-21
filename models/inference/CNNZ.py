@@ -1,5 +1,3 @@
-import sys
-sys.path.append("..")
 from utils import downsample_length, get_padding
 
 import torch
@@ -15,9 +13,9 @@ class CNNZ(nn.Module):
         input_features,
         output_features,
         input_channels=1,
-        num_convs=6,
-        conv_channels=[64, 32, 32, 32, 32, 2],
-        kernel_sizes=[5, 5, 3, 3, 3, 1],
+        num_convs=5,
+        conv_channels=[64, 32, 32, 32, 2],
+        kernel_sizes=[5, 5, 3, 3, 1],
         dropout=0.,
         **args
         ):
@@ -38,7 +36,8 @@ class CNNZ(nn.Module):
         self.fc = nn.Linear(input_features, output_features)
 
     def forward(self, x, tatum_frames):
-        
+        if x.ndim ==  3:
+            x = x.unsqueeze(1)
         output = self.fc(self.cnn(x).transpose(-1, -2))
         # output: (batch_size, num_channels=2, num_frames, output_features)
         return output[:, 0, ...], torch.abs(output[:, 1, ...]) + ALPHA

@@ -5,7 +5,7 @@ def get_collate_fn(collate_fn_type="tatum_based"):
     if collate_fn_type == "tatum_based":
         return collate_fn_tatum_based
     else:
-        return collate_fn_tatum_based
+        return collate_fn_frame_based
         
 def collate_fn_tatum_based(list_data):
     # Input:
@@ -29,6 +29,8 @@ def collate_fn_tatum_based(list_data):
     new_onsets = []
     input_lengths = []
     new_tatums = []
+    new_texts = []
+    text_lengths = []
 
     for n in range(len(list_data)):
         feature = raw_features[n].transpose(0, -1)
@@ -81,6 +83,8 @@ def collate_fn_frame_based(list_data):
     new_onsets = []
     input_lengths = []
     new_tatums = []
+    new_texts = []
+    text_lengths = []
 
     for n in range(len(list_data)):
         feature = raw_features[n].transpose(0, -1)

@@ -103,7 +103,7 @@ class UNet(nn.Module):
         
         self.fc = nn.Sequential(
             nn.Linear(input_channels, output_channels),
-            nn.ReLU(),
+#             nn.ReLU(),
             )
     def forward(self, x):
 

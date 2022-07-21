@@ -1,38 +1,52 @@
 # Contain submodule
 from .lm import get_language_model
 
-from .reconst.CNNReconst import CNNReconst
-from .reconst.LSTMUNet import LSTMUNet
-from .reconst.LSTMUNet import LSTMUNetPitchOnly
-from .reconst.ReconstUNet import ReconstUNet
-from .reconst.ReconstToy import ReconstToy
+from .reconst import ReconstCNN, ReconstRNN
+
 from .inference.CRNN_melody import CRNN_melody
+from .inference.CRNN_lyrics import CRNN_lyrics
+
 from .inference.CNNZ import CNNZ
 from .inference.ConvTCN import ConvTCN
+
 from .basic.CNN import ConvNN
 from .basic.TCN import TemporalConvNet
 from .basic.UNet import UNet
+
 from .renderer.Renderer import Renderer
 
 model_list = {
-    "CNN": ConvNN,
-    "TCN": TemporalConvNet,
-    "CRNN_melody": CRNN_melody,
-    "ConvTCN": ConvTCN,
-    "CNNReconst": CNNReconst,
-    "LSTMUNet": LSTMUNet,
-    "LSTMUNet_pitch_only": LSTMUNetPitchOnly,
-    "ReconstUNet": ReconstUNet,
-    "ReconstToy": ReconstToy,
-    "CNNZ": CNNZ,
-    "UNet": UNet,
-    "Renderer": Renderer,
+    "melody": {
+        "CRNN_melody": CRNN_melody,
+    },
+    "lyrics": {
+        "CRNN_lyrics": CRNN_lyrics,
+    },
+    "rendering": {
+        "Renderer": Renderer,
+    },
+    "z_pre":{
+        "CNN": CNNZ,
+    },
+    "reconst": {
+        "CNN": ReconstCNN.CNN,
+        "LSTMCNN": ReconstCNN.LSTMCNN,
+        "LSTMCNNVariational": ReconstCNN.LSTMCNNVariational,
+        "RNN": ReconstRNN.RNN,
+        "RNNVariational": ReconstRNN.RNNVariational,
+    },
+    # "CNN": ConvNN,
+    # "TCN": TemporalConvNet,
+    # "ConvTCN": ConvTCN,
+    
+    # "CNNZ": CNNZ,
+    # "UNet": UNet,
+    
 }
-def get_model(num_classes_pitch=129, **configs):
+def get_model(model_name="melody", **configs):
     
     model_type = configs.pop('name')
-
-    Model = model_list[model_type]
+    Model = model_list[model_name][model_type]
     
     model = Model(
         **configs,

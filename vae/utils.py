@@ -22,3 +22,14 @@ def ent_bernoulli(logits):
     prob = torch.sigmoid(logits)
     ent = - (prob * torch.log(prob) + (1 - prob) * torch.log(1 - prob))
     return ent
+
+def mse_loss(reconst, target_features, input_lengths):
+    for i in range(len(input_lengths)):
+
+        if i == 0:
+            loss = torch.sum((reconst[i, :, :input_lengths[i]] - target_features[i, :, :input_lengths[i]]) ** 2)
+        else:
+            loss += torch.sum((reconst[i, :, :input_lengths[i]] - target_features[i, :, :input_lengths[i]]) ** 2)
+
+    loss /= torch.sum(input_lengths) * target_features.shape[1]
+    return loss

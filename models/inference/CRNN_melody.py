@@ -1,7 +1,3 @@
-import sys
-sys.path.append("..")
-from utils import downsample_length, get_padding
-
 from torch import nn
 from torch_scatter import segment_csr
 from ..basic.CNN import ConvNN

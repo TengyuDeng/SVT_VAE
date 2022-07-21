@@ -190,11 +190,11 @@ class EarlyStopping:
         else:
             return False
 
-def set_weights(loss_functions, configs, device, pitch_classes=129):
+def set_weights(loss_functions, configs, device):
 
     if 'rest_weight' in configs:
         rest_weight = configs['rest_weight']
-        weight = torch.tensor([rest_weight] * pitch_classes, dtype=torch.float32, device=device)
+        weight = torch.tensor([rest_weight] * 129, dtype=torch.float32, device=device)
         weight[128] = 1.
         loss_functions['pitch'].weight = weight
 
