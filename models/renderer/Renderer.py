@@ -2,9 +2,6 @@ import torch, torchaudio
 from torch import nn
 import numpy as np, librosa
 
-INIT_SIGMA = 10.
-INIT_OMEGA = 1.
-
 class Renderer(nn.Module):
 
     def __init__(
@@ -19,6 +16,8 @@ class Renderer(nn.Module):
         bins_per_octave=12,
         fmin=None,
         fmax=None,
+        init_sigma=10.,
+        init_omega=1.,
         ):
         """
         Parameters:
@@ -53,10 +52,10 @@ class Renderer(nn.Module):
         frs = frs[:, None, None].repeat([1, num_in_bins, num_harmony])
         frs_input = frs_input[None, :, None].repeat([num_f_bins, 1, num_harmony])
 
-        # self.sigmas = nn.Parameter(INIT_SIGMA * torch.ones(num_harmony))
-        # self.omegas = nn.Parameter(INIT_OMEGA * torch.ones(num_harmony))
-        self.sigmas = INIT_SIGMA * torch.ones(num_harmony)
-        self.omegas = INIT_OMEGA * torch.ones(num_harmony)
+        # self.sigmas = nn.Parameter(torch.full((num_harmony,), init_sigma))
+        # self.omegas = nn.Parameter(torch.full((num_harmony,), init_omega))
+        self.sigmas = init_sigma * torch.ones(num_harmony)
+        self.omegas = init_omega * torch.ones(num_harmony)
         self.r_filter = self.omegas * torch.exp(- (frs - torch.arange(1, 1 + num_harmony) * frs_input) ** 2 / (2 * self.sigmas ** 2))
         self.r_filter = torch.sum(self.r_filter, dim=-1)
         # if feature_type == "mel":

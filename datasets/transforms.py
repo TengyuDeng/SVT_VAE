@@ -1,8 +1,10 @@
 import librosa
 import numpy as np
 
-def get_transform(feature_type, params):
-    
+def get_transform(params):
+
+    params = params.copy()
+    feature_type = params.pop("type")
     if feature_type == "logmelspectrogram":
         def transform(waveform, sr):
             mel_features = librosa.feature.melspectrogram(y=waveform, sr=sr, **params)
@@ -27,7 +29,10 @@ def get_transform(feature_type, params):
         def transform(waveform, sr):
             features = np.abs(librosa.stft(y=waveform, **params)) ** 2
             return librosa.power_to_db(features)
-
+    
+    elif feature_type == "vanila":
+        def transform(waveform, sr):
+            return waveform[None, :]
 
     # elif feature_type == "logspectrogram":
     #     def transform(waveform, sr):

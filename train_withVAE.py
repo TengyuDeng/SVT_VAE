@@ -16,14 +16,13 @@ def train_loop(data, model, optimizers, schedulers, loss_functions, loss_weights
     for optimizer in optimizers:
         optimizer.zero_grad()
     # torch.cuda.empty_cache()
-    input_features, target_features, pitches, onsets, input_lengths, tatum_frames, _, _ = data
-    input_features = input_features.to(DEVICE)
-    target_features = target_features.to(DEVICE)
+    features, pitches, onsets, input_lengths, tatum_frames, _, _ = data
+    features = [feature.to(DEVICE) for feature in features]
     pitches = pitches.transpose(-1, -2).to(DEVICE)
     onsets = onsets.to(DEVICE)
     tatum_frames = tatum_frames.to(DEVICE)
     # Forward melody
-    pitches_logits, onsets_logits = model['melody'](input_features, tatum_frames)
+    pitches_logits, onsets_logits = model['melody'](features[0], tatum_frames)
     loss_pitch = loss_functions['pitch'](pitches_logits, pitches)
     loss_onset = loss_functions['onset'](onsets_logits, onsets)
     
@@ -40,10 +39,11 @@ def train_loop(data, model, optimizers, schedulers, loss_functions, loss_weights
         # loss_reconst = torch.mean(((target_features - reconst)[target_features != 0]) ** 2)    
         loss_reconst = loss_functions['reconst'](
             pitches_rendered, onsets_pre,
-            target_features,
+            features[1] if len(features) == 2 else features[2],
             input_lengths,
             tatum_frames,
             supervised=supervised,
+            reconst_input=features[1],
         )
 
         if supervised:
@@ -64,14 +64,13 @@ def train_loop(data, model, optimizers, schedulers, loss_functions, loss_weights
 
 @test_loop_decorator
 def test_loop(data, model, dataloader_name, loss_functions, supervised=False):
-    input_features, target_features, pitches, onsets, input_lengths, tatum_frames, _, _ = data
-    input_features = input_features.to(DEVICE)
-    target_features = target_features.to(DEVICE)
+    features, pitches, onsets, input_lengths, tatum_frames, _, _ = data
+    features = [feature.to(DEVICE) for feature in features]
     tatum_frames = tatum_frames.to(DEVICE)
     with torch.no_grad():
         # pitches_logits: (batch_size, num_tatums, num_pitches)
         # onsets_logits: (batch_size, num_tatums)
-        pitches_logits, onsets_logits = model['melody'](input_features, tatum_frames)
+        pitches_logits, onsets_logits = model['melody'](features[0], tatum_frames)
         if supervised:
             pitches_pre = pitches.transpose(-1, -2).to(DEVICE)
             onsets_pre = onsets.to(DEVICE)
@@ -81,10 +80,11 @@ def test_loop(data, model, dataloader_name, loss_functions, supervised=False):
         pitches_rendered = model['rendering'](pitches_pre[..., :-1])
         loss_reconst = loss_functions['reconst'](
             pitches_rendered, onsets_pre,
-            target_features,
+            features[1] if len(features) == 2 else features[2],
             input_lengths,
             tatum_frames,
             supervised=supervised,
+            reconst_input=features[1],
         ).detach().cpu().item()
 
     # Melody evaluation

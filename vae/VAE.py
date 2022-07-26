@@ -40,6 +40,7 @@ class VAE:
         lyrics=None,
         lyrics_downsample=2,
         supervised=False,
+        reconst_input=None,
         ):
         """
         Input:
@@ -55,7 +56,9 @@ class VAE:
 
         # p(Z): prior distribution of Z
         # q(Z|X): posterior distribution of Z
-        q_z_mean_x, q_z_std_x = self.z_est_model(x_target, tatum_frames)
+        if reconst_input is None:
+            reconst_input = x_target
+        q_z_mean_x, q_z_std_x = self.z_est_model(reconst_input, tatum_frames)
         batch_size, num_tatums, dim_z = q_z_mean_x.shape
         z_dist_post = torch.distributions.normal.Normal(
             loc=q_z_mean_x, scale=q_z_std_x
@@ -65,8 +68,22 @@ class VAE:
         reconst_loss = []
         for i in range(self.num_sample):
             z_sample = z_dist_post.rsample()
-            reconst = self.x_reconst_model(z_sample, pitch, onset, tatum_frames, lyrics=lyrics, lyrics_downsample=lyrics_downsample).transpose(-1, -2)
-            reconst_loss.append(mse_loss(reconst, x_target, input_lengths))
+            reconst = self.x_reconst_model(z_sample, pitch, onset, tatum_frames, lyrics=lyrics, lyrics_downsample=lyrics_downsample)
+            if isinstance(reconst, tuple):
+                reconst_with_z, reconst_no_z = reconst
+                # print(f"""
+                #     current_loss = (
+                #     {self.loss_weights['with_z']} * {mse_loss(reconst_with_z.transpose(-1, -2), x_target, input_lengths)} + 
+                #     {self.loss_weights['no_z']} * {mse_loss(reconst_no_z.transpose(-1, -2), x_target, input_lengths)}
+                #     )
+                #     """)
+                current_loss = (
+                    self.loss_weights['with_z'] * mse_loss(reconst_with_z.transpose(-1, -2), x_target, input_lengths) + 
+                    self.loss_weights['no_z'] * mse_loss(reconst_no_z.transpose(-1, -2), x_target, input_lengths)
+                    )
+            else:
+                current_loss = mse_loss(reconst.transpose(-1, -2), x_target, input_lengths)
+            reconst_loss.append(current_loss)
 
         reconst_loss = torch.mean(torch.stack(reconst_loss))
         

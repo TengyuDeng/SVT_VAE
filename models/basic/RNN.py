@@ -2,11 +2,11 @@ from torch import nn
         
 class RNNLayer(nn.Module):
 
-    def __init__(self, input_size, hidden_size, dropout=0.2):
+    def __init__(self, input_size, hidden_size, dropout=0.2, normalize=True):
 
         super(RNNLayer, self).__init__()
-
-        self.norm = nn.LayerNorm(input_size)
+        
+        self.norm = nn.LayerNorm(input_size) if normalize else nn.Identity()
         self.bilstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, bidirectional=True)
         self.dropout = nn.Dropout(dropout)
 

@@ -60,7 +60,8 @@ class CRNN_lyrics(nn.Module):
             RNNLayer(
             input_size=lstm_channels * 2 if i > 0 else conv_channels[-1] * downsample_length(input_features, self.down_sample), 
             hidden_size=lstm_channels,
-            dropout=dropout,
+            dropout=dropout if i < num_lstms - 1 else 0.,
+            normalize=True if i > 0 else False,
             )
             for i in range(num_lstms)
             ]

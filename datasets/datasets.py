@@ -4,14 +4,12 @@ import librosa
 import pickle
 import os, h5py
 from decoders import Mycodec
+from .transforms import get_transform
 
 # os.environ["HDF5_USE_FILE_LOCKING"] = 'FALSE'
 
 seed = 65324
 
-def vanila_transform(waveform, sr):
-    return waveform[None, :]
-    
 class ConvFilter:
     def __init__(self, half_length=5, v_max=1):
         self.padding = half_length - 1
@@ -31,13 +29,16 @@ class ConvFilter:
         return weights
 
 class MyDataset(torch.utils.data.Dataset):
-    
+    # TODO: pitch recognition input not shift,
+    #       reconstruction input shift!
+    #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     def __init__(self, indexes_path, hdf5s_dir, hop_length,
-        transform=vanila_transform,
-        target_transform=vanila_transform,
+        transforms = [{"type": "vanila"}],
         tatum_based=True,
         datatypes=["separated"],
         codec_type="word",
+        pitch_shift=False,
+        pitch_label_shift=False,
         min_pitch_label=0,
         max_pitch_label=128,
         ):
@@ -46,9 +47,16 @@ class MyDataset(torch.utils.data.Dataset):
         self.indexes = pickle.load(open(indexes_path, 'rb'))
         self.hdf5s_dir = hdf5s_dir
         self.hop_length = hop_length
+        
+        self.pitch_shift = []
+        self.transforms = []
+        for transform_params in transforms.copy():
+            try:
+                self.pitch_shift.append(transform_params.pop("pitch_shift"))
+            except KeyError:
+                self.pitch_shift.append(False)
+            self.transforms.append(get_transform(transform_params))
 
-        self.transform = transform
-        self.target_transform = target_transform
         self.tatum_based = tatum_based
         self.datatypes = datatypes
         self.codec_type = codec_type
@@ -56,9 +64,9 @@ class MyDataset(torch.utils.data.Dataset):
             self.codec = Mycodec(self.codec_type, min_pitch_label, max_pitch_label)
         else:
             self.codec = Mycodec(self.codec_type)
-
-        self.configs = {}
-
+        self.configs = {
+            "pitch_shift": pitch_shift,
+        }
         self.rand = np.random.RandomState(seed)
 
     def __len__(self):
@@ -69,11 +77,11 @@ class MyDataset(torch.utils.data.Dataset):
         pass
         # Return positions, hdf5_paths, pitch_offset, text
     
-    def _get_waveform(self, hf, positions, datatype, index=0):
+    def _get_waveform(self, hf, positions, datatype, pitch_shift=0):
         pass
         # Return waveform (of datatype)
 
-    def _get_data(self, hf, positions, pitch_offset, index=0):
+    def _get_data(self, hf, positions, pitch_offset):
         pass
         # Return pitches, onsets, sr, tatum_time
     
@@ -90,7 +98,7 @@ class MyDataset(torch.utils.data.Dataset):
         else:
             return features[0]
 
-    def _create_frame_based_targets(self, midi_notes, sr, frames, pitch_shift=0, pitch_offset=0):
+    def _create_frame_based_targets(self, midi_notes, sr, frames, pitch_offset=0):
         frame_length = frames[1] - frames[0]
         pitches_frame = np.full(frame_length, 128, dtype=int)
         onsets_frame = np.full(frame_length, 0, dtype=float)
@@ -102,7 +110,7 @@ class MyDataset(torch.utils.data.Dataset):
                 pitches_frame[start_frame:end_frame] = note[-1]
                 onsets_frame[start_frame] = 1
 
-        pitches_frame[pitches_frame != 128] += pitch_shift + pitch_offset
+        pitches_frame[pitches_frame != 128] += pitch_offset
         pitches_frame = np.clip(pitches_frame, 0, 128)
         pitches_frame = self._pitch_to_zeroone(pitches_frame)
         
@@ -117,9 +125,13 @@ class MyDataset(torch.utils.data.Dataset):
         return new_pitches
         
     def __getitem__(self, i):
-        # start_time = time.time()
+        # start_time = time.time()]
+        pitch_shifts = []
+        for pitch_shift in self.pitch_shift:
+            pitch_shifts.append(self.rand.randint(-12, 13) if pitch_shift else 0)
         
         positions, hdf5_paths, pitch_offset, text = self._get_index(i)
+        
         if self.codec_type == "phoneme":
             text = self.codec.phonemize(text)
         text = self.codec.encode(text)
@@ -128,15 +140,21 @@ class MyDataset(torch.utils.data.Dataset):
         for key in hdf5_paths:
             hfs[key] = h5py.File(hdf5_paths[key], 'r')
         waveforms = {}
-        for datatype in self.datatypes:
-            waveforms[datatype] = self._get_waveform(hfs[datatype], positions, datatype, index=i)
-        pitches, onsets, sr, tatum_time = self._get_data(hfs['mix'], positions, pitch_offset, index=i)
+        for pitch_shift in set(pitch_shifts):
+            waveforms[pitch_shift] = {}
+            for datatype in self.datatypes:
+                waveforms[pitch_shift][datatype] = self._get_waveform(hfs[datatype], positions, datatype, pitch_shift)
+        pitches, onsets, sr, tatum_time = self._get_data(hfs['mix'], positions, pitch_offset + pitch_shifts[0])
         for key in hfs:
             hfs[key].close()
 
+        # DEBUG PRINT
+        # print(waveforms)
+
         # input features:
-        input_features = self._get_transformed_features(waveforms, sr, self.transform)
-        target_features = self._get_transformed_features(waveforms, sr, self.target_transform)
+        input_features = []
+        for i, transform in enumerate(self.transforms):
+            input_features.append(self._get_transformed_features(waveforms[pitch_shifts[i]], sr, transform))
 
         # tatum frames:
         if self.tatum_based:
@@ -144,16 +162,16 @@ class MyDataset(torch.utils.data.Dataset):
             n_frames = tatum_frames[-1]
         # print(f"getitem using time {time.time() - start_time}")
             return (
-                input_features[..., :n_frames], target_features[..., :n_frames], pitches, onsets,
+                [feature[..., :n_frames] for feature in input_features], pitches, onsets,
                 torch.tensor(tatum_frames, dtype=torch.long),
                 torch.tensor(text, dtype=torch.int),
                 )
         else:
             n_frames = min(input_features.shape[-1], pitches.shape[0])
             tatum_frames = torch.tensor([0, n_frames], dtype=torch.long)
-
+            
             return (
-                input_features[..., :n_frames], target_features[..., :n_frames], pitches[..., :n_frames], onsets[:n_frames],
+                [feature[..., :n_frames] for feature in input_features], pitches[..., :n_frames], onsets[:n_frames],
                 torch.tensor(tatum_frames, dtype=torch.long),
                 torch.tensor(text, dtype=torch.int),
                 )
@@ -161,26 +179,22 @@ class MyDataset(torch.utils.data.Dataset):
 class RWCDataset(MyDataset):
     
     def __init__(self, indexes_path, hdf5s_dir, 
-        pitch_shift=False,
         **args,
         ):
         # *** self.configs['pitch_shift']
         # 
         super().__init__(indexes_path, hdf5s_dir, **args)
-        
-        self.configs = {
-            'pitch_shift': pitch_shift,
-        }
 
     def __len__(self):
-
-        if self.configs['pitch_shift']:
-            return len(self.indexes) * 25
-        else:
-            return len(self.indexes)
+        return len(self.indexes)
+        # if self.configs['pitch_shift']:
+        #     return len(self.indexes) * 25
+        # else:
+        #     return len(self.indexes)
     
     def _get_index(self, i):
-        index_id = i // 25 if self.configs['pitch_shift'] else i
+        # index_id = i // 25 if self.configs['pitch_shift'] else i
+        index_id = i
         track_id = self.indexes[index_id]['track_id']
         if self.tatum_based:
             positions = self.indexes[index_id]['tatum_ids']
@@ -199,14 +213,17 @@ class RWCDataset(MyDataset):
         
         return positions, hdf5_paths, pitch_offset, text
 
-    def _get_waveform(self, hf, positions, datatype, index):
+    def _get_waveform(self, hf, positions, datatype, pitch_shift=0):
+        # in RWC dataset, whether to use separated ver. are decided by the hdf5_path
         sr = hf.attrs['sample_rate']
         if self.tatum_based:
             samples = librosa.time_to_samples(hf['tatum_time'][positions], sr=sr)
         else:
             samples = librosa.frames_to_samples(positions, hop_length=hf.attrs['hop_length'])
-
-        pitch_shift = list(range(-12, 13))[index % 25] if self.configs['pitch_shift'] else 0
+        
+        # DEBUG PRINT
+        # print(f"pitch_shift={pitch_shift}")
+        
         # if len(waveform) < samples[1] - samples[0]:
         #     waveform = np.pad(waveform, (0, samples[1] - samples[0]))
         if pitch_shift == 0:
@@ -214,7 +231,7 @@ class RWCDataset(MyDataset):
         else:
             return hf[f"waveform_shifted_{pitch_shift}"][samples[0]: samples[1]]
         
-    def _get_data(self, hf, positions, pitch_offset, index):
+    def _get_data(self, hf, positions, pitch_offset):
         sr = hf.attrs['sample_rate']
         if self.tatum_based:
             samples = librosa.time_to_samples(hf['tatum_time'][positions], sr=sr)
@@ -222,8 +239,6 @@ class RWCDataset(MyDataset):
         else:
             samples = librosa.frames_to_samples(positions, hop_length=hf.attrs['hop_length'])
             frames = librosa.samples_to_frames(samples, hop_length=self.hop_length)
-        pitch_shift = list(range(-12, 13))[index % 25] if self.configs['pitch_shift'] else 0
-        # print(f"pitch_shift={pitch_shift}")
         
         if self.tatum_based:
             tatum_ids = positions
@@ -234,7 +249,7 @@ class RWCDataset(MyDataset):
             # Pitch and onset
             pitches = hf['pitch_tatums'][tatum_ids[0]: tatum_ids[1]]
             # print(pitches)
-            pitches[pitches != 128] += pitch_shift
+            pitches[pitches != 128] += pitch_offset
             pitches = np.clip(pitches, 0, 128)
             # print(pitches)
             pitches = self._pitch_to_zeroone(pitches)
@@ -278,7 +293,7 @@ class DALIDataset(MyDataset):
         
         return positions, hdf5_paths, pitch_offset, text
 
-    def _get_waveform(self, hf, positions, datatype, index=0):
+    def _get_waveform(self, hf, positions, datatype, pitch_shift=0):
         key_list = {
             "mix": "waveform",
             "separated": "waveform_separated",
@@ -293,7 +308,7 @@ class DALIDataset(MyDataset):
         #     waveform = np.pad(waveform, (0, samples[1] - samples[0]))
         return hf[key_list[datatype]][samples[0]: samples[1]]
                 
-    def _get_data(self, hf, positions, pitch_offset, index=0):
+    def _get_data(self, hf, positions, pitch_offset):
         sr = hf.attrs['sample_rate']
         if self.tatum_based:
             samples = librosa.time_to_samples(hf['tatum_time'][positions], sr=sr)

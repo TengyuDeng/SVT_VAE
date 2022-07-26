@@ -20,46 +20,29 @@ def collate_fn_tatum_based(list_data):
     
     # start_time = time.time()
 
-    raw_features, raw_targets, raw_pitches, raw_onsets, raw_tatums, raw_texts = tuple(zip(*list_data))
+    features_list, pitches, onsets, tatums, texts = tuple(zip(*list_data))
 
     # features
-    new_features = []
-    new_targets = []
-    new_pitches = []
-    new_onsets = []
-    input_lengths = []
-    new_tatums = []
-    new_texts = []
-    text_lengths = []
-
-    for n in range(len(list_data)):
-        feature = raw_features[n].transpose(0, -1)
-        target_feature = raw_targets[n].transpose(0, -1)
-        pitch = raw_pitches[n]
-        onset = raw_onsets[n]
-        tatum = raw_tatums[n]
-        text = raw_texts[n]
-        # feature (channel, time)
-        if feature.ndim > 1:
-            new_features.append(feature)
-            new_targets.append(target_feature)
-            input_lengths.append(feature.shape[0])
-            new_pitches.append(pitch)
-            new_onsets.append(onset)
-            new_tatums.append(tatum)
-            new_texts.append(text)
-            text_lengths.append(len(text))
     
-    input_features = torch.nn.utils.rnn.pad_sequence(new_features, batch_first=True).transpose(1, -1)
-    target_features = torch.nn.utils.rnn.pad_sequence(new_targets, batch_first=True).transpose(1, -1)
-    pitches = torch.stack(new_pitches)
-    onsets = torch.stack(new_onsets)
-    texts = torch.cat(new_texts)
-    input_lengths = torch.tensor(input_lengths, dtype=torch.int)
-    text_lengths = torch.tensor(text_lengths, dtype=torch.int)
-    tatum_frames = torch.stack(new_tatums)
+    features_list = list(zip(*features_list))
+    for i in range(len(features_list)):
+        features_list[i] = [feature.transpose(0, -1) for feature in features_list[i]]
 
-    return (input_features, target_features, pitches, onsets, input_lengths, tatum_frames, texts, text_lengths)
+    input_lengths = torch.tensor([feature.shape[0] for feature in features_list[0]], dtype=torch.int)
+    text_lengths = torch.tensor([len(text) for text in texts], dtype=torch.int)
+
+    input_features = [
+        torch.nn.utils.rnn.pad_sequence(features, batch_first=True).transpose(1, -1)
+        for features in features_list
+        ]
+    
+    pitches = torch.stack(pitches)
+    onsets = torch.stack(onsets)
+    texts = torch.cat(texts)
+    
+    tatum_frames = torch.stack(tatums)
+
+    return (input_features, pitches, onsets, input_lengths, tatum_frames, texts, text_lengths)
 
 def collate_fn_frame_based(list_data):
     # Input:
@@ -74,48 +57,32 @@ def collate_fn_frame_based(list_data):
     
     # start_time = time.time()
 
-    raw_features, raw_targets, raw_pitches, raw_onsets, raw_tatums, raw_texts = tuple(zip(*list_data))
+    features_list, pitches, onsets, tatums, texts = tuple(zip(*list_data))
 
     # features
-    new_features = []
-    new_targets = []
-    new_pitches = []
-    new_onsets = []
-    input_lengths = []
-    new_tatums = []
-    new_texts = []
-    text_lengths = []
-
-    for n in range(len(list_data)):
-        feature = raw_features[n].transpose(0, -1)
-        target_feature = raw_targets[n].transpose(0, -1)
-        pitch = raw_pitches[n]
-        if pitch.ndim == 2:
-            pitch = pitch.transpose(0, -1)
-        onset = raw_onsets[n]
-        tatum = raw_tatums[n]
-        text = raw_texts[n]
-        # feature (channel, time)
-        if feature.ndim > 1:
-            new_features.append(feature)
-            new_targets.append(target_feature)
-            input_lengths.append(feature.shape[0])
-            new_pitches.append(pitch)
-            new_onsets.append(onset)
-            new_tatums.append(tatum)
-            new_texts.append(text)
-            text_lengths.append(len(text))
     
-    input_features = torch.nn.utils.rnn.pad_sequence(new_features, batch_first=True).transpose(1, -1)
-    target_features = torch.nn.utils.rnn.pad_sequence(new_targets, batch_first=True).transpose(1, -1)
+    features_list = list(zip(*features_list))
+    for i in range(len(features_list)):
+        features_list[i] = [feature.transpose(0, -1) for feature in features_list[i]]
+    if pitches[0].ndim == 2:
+        pitches = [pitch.transpose(0, -1) for pitch in pitches]
+
+    input_lengths = torch.tensor([feature.shape[0] for feature in features_list[0]], dtype=torch.int)
+    text_lengths = torch.tensor([len(text) for text in texts], dtype=torch.int)
+
+    input_features = [
+        torch.nn.utils.rnn.pad_sequence(features, batch_first=True).transpose(1, -1)
+        for features in features_list
+        ]
+    
     if new_pitches[0].ndim == 1:
         pitches = torch.nn.utils.rnn.pad_sequence(new_pitches, batch_first=True, padding_value=128)
     else:
         pitches = torch.nn.utils.rnn.pad_sequence(new_pitches, batch_first=True, padding_value=0).transpose(1, -1)
     onsets = torch.nn.utils.rnn.pad_sequence(new_onsets, batch_first=True, padding_value=0.)
-    texts = torch.cat(new_texts)
-    input_lengths = torch.tensor(input_lengths, dtype=torch.int)
-    text_lengths = torch.tensor(text_lengths, dtype=torch.int)
-    tatum_frames = torch.stack(new_tatums)
 
-    return (input_features, target_features, pitches, onsets, input_lengths, tatum_frames, texts, text_lengths)
+    texts = torch.cat(texts)
+    
+    tatum_frames = torch.stack(tatums)
+
+    return (input_features, pitches, onsets, input_lengths, tatum_frames, texts, text_lengths)

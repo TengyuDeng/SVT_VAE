@@ -15,6 +15,7 @@ class CRNN_melody(nn.Module):
         kernel_sizes=[5, 5, 3, 3, 3, 1],
         dropout=0.,
         lstm_channels=512,
+        lstm_norm=True,
         **args
         ):
 
@@ -39,6 +40,7 @@ class CRNN_melody(nn.Module):
             input_size=conv_channels[-1] * input_features, 
             hidden_size=num_classes_pitch + 1, 
             dropout=dropout,
+            normalize=lstm_norm,
         )
 
     def forward(self, x, tatum_frames):
